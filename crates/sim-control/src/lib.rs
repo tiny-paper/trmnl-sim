@@ -12,6 +12,7 @@
 //! | POST   | `/touch`               | `{"zone": "left"\|"center"\|"right", "ms": 120}` tap, returns after lift; `"down": bool` holds / lifts instead | |
 //! | POST   | `/gesture`             | `{"gesture": "swipe_next"\|"swipe_back"\|"flick_next"\|"flick_back"}` | |
 //! | POST   | `/dock`                | `{"docked": true}`                             | |
+//! | POST   | `/serial`              | raw bytes for the firmware's USB serial input (ESP32-S3) | |
 //! | POST   | `/reset`               |                                                | |
 //! | POST   | `/power-cycle`         |                                                | |
 //! | POST   | `/wake`                |                                                | |
@@ -205,6 +206,10 @@ fn route(h: &SimHandle, method: &Method, path: &str, q: &[(String, String)], bod
         (Method::Post, "/dock") => {
             let docked = body_json(body)?["docked"].as_bool().ok_or("need {\"docked\": bool}")?;
             h.send(Command::SetDocked(docked));
+            ok()
+        }
+        (Method::Post, "/serial") => {
+            h.send(Command::SerialInput(body.to_vec()));
             ok()
         }
         (Method::Post, "/reset") => {

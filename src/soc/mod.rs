@@ -49,6 +49,8 @@ pub trait Machine: Send {
     fn advance_time(&mut self, ns: u64);
     fn instructions(&self) -> u64;
     fn board(&mut self) -> &mut dyn Board;
+    /// Host bytes for the USB serial/JTAG receive FIFO (ESP32-S3 only; ignored elsewhere).
+    fn serial_input(&mut self, _data: &[u8]) {}
     /// Serial output and simulator messages produced since the last call, in order.
     fn take_output(&mut self) -> Vec<Output>;
     /// Persist flash contents.

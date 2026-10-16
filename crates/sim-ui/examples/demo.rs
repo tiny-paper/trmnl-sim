@@ -238,6 +238,7 @@ impl Fake {
                 self.p.status.lock().button_down = true;
                 self.wake_on_input("button");
             }
+            Command::SerialInput(_) => {}
             Command::SetDocked(d) => {
                 self.p.status.lock().docked = d;
                 self.idf('I', "power", if d { "USB power connected (docked)" } else { "USB power removed" });

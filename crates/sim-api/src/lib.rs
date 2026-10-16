@@ -529,6 +529,8 @@ pub enum Command {
     Gesture(SliderGesture),
     /// Put the device on (true) or take it off (false) its magnetic dock.
     SetDocked(bool),
+    /// Bytes the host writes to the device's USB serial port (the firmware reads them as input).
+    SerialInput(Vec<u8>),
     /// Battery voltage in millivolts.
     SetBatteryMv(u32),
     /// Show the black/white flashes of a (4-color) panel refresh (true, the default), or

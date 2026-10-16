@@ -407,6 +407,7 @@ pub fn run(mut m: Box<dyn Machine>, ports: SimPorts, mut opts: RunnerOptions) ->
                         .lock()
                         .push_sim(&format!("touch bar {g:?}{}", if accepted { "" } else { " (not enabled: ignored)" }));
                 }
+                Command::SerialInput(data) => m.serial_input(&data),
                 Command::SetDocked(docked) => {
                     m.board().set_docked(docked);
                     ports.console.lock().push_sim(if docked { "placed on dock" } else { "removed from dock" });

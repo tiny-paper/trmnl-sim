@@ -940,6 +940,10 @@ impl Machine for Esp32s3 {
         self.retired
     }
 
+    fn serial_input(&mut self, data: &[u8]) {
+        self.bus.usb_rx_push(data);
+    }
+
     fn board(&mut self) -> &mut dyn Board {
         self.bus.board.as_mut()
     }

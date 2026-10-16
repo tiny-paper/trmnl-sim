@@ -162,6 +162,8 @@ pub struct Periph {
     pub console_out: Vec<u8>,
     console: Console,
     usb_raw: u32,
+    /// Bytes the host sent to the USB serial/JTAG OUT endpoint, not yet read by the firmware.
+    usb_rx: VecDeque<u8>,
     usb_last_sof: u64,
     pub lcd_raw: u32,
     pub reset_request: Option<ResetRequest>,
@@ -200,6 +202,7 @@ impl Periph {
             console_out: Vec::new(),
             console: Console::default(),
             usb_raw: 0,
+            usb_rx: VecDeque::new(),
             usb_last_sof: 0,
             lcd_raw: 0,
             reset_request: None,
@@ -388,7 +391,10 @@ impl S3Bus {
             0x6000_E040 => stored | 1 << 24,
 
             // ---- USB serial/JTAG: the console ----
-            _ if a == USB_JTAG + 0x04 => stored & !1 | 1 << 1, // IN endpoint always has room
+            // EP1_CONF: bit 1 IN endpoint has room (always), bit 2 OUT endpoint has data
+            _ if a == USB_JTAG + 0x04 => stored & !1 & !(1 << 2) | 1 << 1 | (!self.p.usb_rx.is_empty() as u32) << 2,
+            // EP1: reading pops the next byte the host sent
+            _ if a == USB_JTAG => self.p.usb_rx.pop_front().unwrap_or(0) as u32,
             _ if a == USB_JTAG + 0x08 => self.usb_raw(),
             _ if a == USB_JTAG + 0x0C => self.usb_raw() & self.p.store_get(USB_JTAG + 0x10),
             _ if a == USB_JTAG + 0x24 => ((now / 1_000_000) & 0x7ff) as u32, // SOF frame number (1 kHz)
@@ -724,6 +730,15 @@ impl S3Bus {
         if frame != self.p.usb_last_sof {
             self.p.usb_last_sof = frame;
             self.p.usb_raw |= 1 << 1;
+            self.irq_dirty = true;
+        }
+    }
+
+    /// The host writes `data` to the serial port: it queues in the OUT endpoint's FIFO.
+    pub fn usb_rx_push(&mut self, data: &[u8]) {
+        self.p.usb_rx.extend(data);
+        if !data.is_empty() {
+            self.p.usb_raw |= 1 << 2; // SERIAL_OUT_RECV_PKT
             self.irq_dirty = true;
         }
     }
@@ -1190,5 +1205,40 @@ impl S3Bus {
             w[..chunk.len()].copy_from_slice(chunk);
             self.p.store_set(SPI1 + 0x58 + 4 * i as u32, u32::from_le_bytes(w));
         }
+    }
+}
+
+#[cfg(test)]
+mod usb_tests {
+    use super::*;
+    use crate::devices::spi_flash::SpiFlash;
+
+    const EP1: u32 = USB_JTAG;
+    const EP1_CONF: u32 = USB_JTAG + 0x04;
+    const INT_RAW: u32 = USB_JTAG + 0x08;
+    const INT_CLR: u32 = USB_JTAG + 0x14;
+    const OUT_RECV_PKT: u32 = 1 << 2;
+    const OUT_EP_DATA_AVAIL: u32 = 1 << 2;
+
+    fn bus() -> S3Bus {
+        let flash = SpiFlash::new(vec![0xff; 4096], None);
+        S3Bus::new(Vec::new().into_boxed_slice(), flash, Box::new(super::super::NullBoard))
+    }
+
+    /// What the IDF usb_serial_jtag ISR does: see RECV_PKT, clear it, drain EP1 while data is available.
+    #[test]
+    fn host_bytes_read_back_through_the_ep1_fifo() {
+        let mut b = bus();
+        assert_eq!(b.periph_read(EP1_CONF) & OUT_EP_DATA_AVAIL, 0);
+        assert_eq!(b.periph_read(INT_RAW) & OUT_RECV_PKT, 0);
+        b.usb_rx_push(b"!tp log live\n");
+        assert_ne!(b.periph_read(INT_RAW) & OUT_RECV_PKT, 0);
+        b.periph_write(INT_CLR, OUT_RECV_PKT);
+        assert_eq!(b.periph_read(INT_RAW) & OUT_RECV_PKT, 0);
+        let mut got = Vec::new();
+        while b.periph_read(EP1_CONF) & OUT_EP_DATA_AVAIL != 0 {
+            got.push(b.periph_read(EP1) as u8);
+        }
+        assert_eq!(got, b"!tp log live\n");
     }
 }

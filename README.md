@@ -371,6 +371,7 @@ build; restoring onto another build, or saving mid-refresh, is refused.
 | `POST /touch {"zone": "left"\|"center"\|"right", "ms": N}` | TRMNL X touch bar tap (`"down": true/false`: hold / lift a finger) |
 | `POST /gesture {"gesture": "swipe_next"\|"swipe_back"\|"flick_next"\|"flick_back"}` | TRMNL X slide (slide mode only) |
 | `POST /dock {"docked": bool}` | TRMNL X magnetic dock |
+| `POST /serial` (raw body) | bytes into the USB serial/JTAG input the firmware reads (ESP32-S3) |
 | `POST /reset`, `/power-cycle`, `/wake`, `/quit` | |
 | `POST /wifi {"available": bool}` | network in or out of range; `{"networks": [...]}` replaces the access points; `{"portal_client": false}` lets an unattended portal run ahead in turbo |
 | `POST /battery {"mv": N}` | |
