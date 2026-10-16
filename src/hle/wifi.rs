@@ -275,6 +275,50 @@ impl WifiState {
         m
     }
 
+    /// `esp_wifi_start`: the START events follow shortly.
+    fn begin(&mut self, now: u64) {
+        let w = self;
+        if !w.started {
+            w.started = true;
+            if w.mode & 1 != 0 {
+                w.post(now + 5 * MS, EV_STA_START, vec![]);
+            }
+            if w.mode & 2 != 0 {
+                w.post(now + 5 * MS, EV_AP_START, vec![]);
+            }
+        }
+    }
+
+    /// `esp_wifi_stop`: the events to post at once (DISCONNECTED/STOP).
+    fn halt(&mut self) -> Vec<(u32, Vec<u8>)> {
+    let mut events = Vec::new();
+    let w = self;
+    if w.started {
+        w.started = false;
+        if let Some(i) = w.connected.take() {
+            let ap = w.networks[i].clone();
+            events.push((EV_STA_DISCONNECTED, w.disconnected_event(Some(&ap), REASON_ASSOC_LEAVE)));
+        }
+        if w.mode & 1 != 0 {
+            events.push((EV_STA_STOP, vec![]));
+        }
+        if w.mode & 2 != 0 {
+            events.push((EV_AP_STOP, vec![]));
+            w.ap_client = None;
+            w.ap_client_joined = false;
+            w.ap_client_associated = false;
+            w.rx.retain(|(ifx, _)| *ifx != 1);
+        }
+        w.connecting = false;
+        // A connection attempt still under way ends here: its outcome (connected, or a
+        // failure's DISCONNECTED) never comes, or it would reach the netif freed after this.
+        w.events.retain(|e| !matches!(e.id, EV_STA_CONNECTED | EV_STA_DISCONNECTED | EV_AP_STACONNECTED));
+        // Likewise the START events of the start being stopped: left queued, start-stop-start adds the netif twice.
+        w.events.retain(|e| !matches!(e.id, EV_STA_START | EV_AP_START));
+    }
+    events
+    }
+
     fn post(&mut self, at_ns: u64, id: u32, data: Vec<u8>) {
         self.events.push(PendingEvent { at_ns, id, data });
     }
@@ -648,16 +692,7 @@ fn start(c: &mut HleCtx) -> Flow {
     }
     let now = c.env.now_ns();
     c.env.console("wifi: esp_wifi_start()");
-    let w = &mut c.state.wifi;
-    if !w.started {
-        w.started = true;
-        if w.mode & 1 != 0 {
-            w.post(now + 5 * MS, EV_STA_START, vec![]);
-        }
-        if w.mode & 2 != 0 {
-            w.post(now + 5 * MS, EV_AP_START, vec![]);
-        }
-    }
+    c.state.wifi.begin(now);
     Flow::Return(Some(ESP_OK))
 }
 
@@ -665,29 +700,7 @@ fn start(c: &mut HleCtx) -> Flow {
 /// returning (callers tear down their netifs right after).
 fn stop(c: &mut HleCtx) -> Flow {
     c.env.console("wifi: esp_wifi_stop()");
-    let w = &mut c.state.wifi;
-    let mut events = Vec::new();
-    if w.started {
-        w.started = false;
-        if let Some(i) = w.connected.take() {
-            let ap = w.networks[i].clone();
-            events.push((EV_STA_DISCONNECTED, w.disconnected_event(Some(&ap), REASON_ASSOC_LEAVE)));
-        }
-        if w.mode & 1 != 0 {
-            events.push((EV_STA_STOP, vec![]));
-        }
-        if w.mode & 2 != 0 {
-            events.push((EV_AP_STOP, vec![]));
-            w.ap_client = None;
-            w.ap_client_joined = false;
-            w.ap_client_associated = false;
-            w.rx.retain(|(ifx, _)| *ifx != 1);
-        }
-        w.connecting = false;
-        // A connection attempt still under way ends here: its outcome (connected, or a
-        // failure's DISCONNECTED) never comes, or it would reach the netif freed after this.
-        w.events.retain(|e| !matches!(e.id, EV_STA_CONNECTED | EV_STA_DISCONNECTED | EV_AP_STACONNECTED));
-    }
+    let events = c.state.wifi.halt();
     let posted = !events.is_empty();
     post_then(c, events.into(), move |c| {
         let delay = c.syms.addr("vTaskDelay").unwrap_or(0);
@@ -987,5 +1000,28 @@ fn deliver_frame(c: &mut HleCtx, cb: u32, frame: Vec<u8>) -> Flow {
             c.state.wifi.stats.rx_frames += 1;
             Flow::Call { func: cb, args: vec![buf, len, buf], then: Box::new(back_to_loop) }
         }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pending(w: &WifiState, id: u32) -> usize {
+        w.events.iter().filter(|e| e.id == id).count()
+    }
+
+    #[test]
+    fn start_stop_start_queues_one_sta_start() {
+        let mut w = WifiState::new([2, 0, 0, 0, 0, 1]);
+        w.mode = 3;
+        w.initialized = true;
+        w.begin(0);
+        w.halt();
+        w.begin(1_000_000);
+        // The first start's events were still pending when stop ran: a second STA_START
+        // would add the netif twice (netif_add aborts).
+        assert_eq!(pending(&w, EV_STA_START), 1);
+        assert_eq!(pending(&w, EV_AP_START), 1);
     }
 }
