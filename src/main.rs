@@ -14,6 +14,7 @@ mod nvs;
 mod periph;
 mod runner;
 mod savepoint;
+mod serial_pty;
 mod soc;
 
 use std::path::PathBuf;
@@ -70,6 +71,9 @@ struct Cli {
     /// With --gdb: hold the CPU at its first instruction until GDB attaches.
     #[arg(long, requires = "gdb")]
     gdb_wait: bool,
+    /// Offer the USB serial (ESP32-S3) as a pseudo-terminal; PATH is a symlink to its slave, removed on exit.
+    #[arg(long, value_name = "PATH")]
+    serial_pty: Option<PathBuf>,
     /// Start the built-in mock TRMNL server on this port (default 8090; 0 = any free port).
     /// The device reaches it at http://10.0.2.2:PORT. It can also be started from the window
     /// or the control API.
@@ -408,6 +412,12 @@ fn main() -> Result<()> {
         firmware_name: fw.name.clone(),
         exit_on_halt: cli.headless && cli.control.is_none() && cli.gdb.is_none(),
         gdb_wait: cli.gdb_wait,
+        serial_pty: cli
+            .serial_pty
+            .as_deref()
+            .map(crate::serial_pty::SerialPty::open)
+            .transpose()
+            .context("--serial-pty")?,
         firmware: fw_id,
         restore,
         coverage,

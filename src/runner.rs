@@ -39,6 +39,8 @@ pub struct RunnerOptions {
     pub hot_reload: Option<HotReload>,
     /// `--gdb-wait`: nothing runs until a debugger attaches.
     pub gdb_wait: bool,
+    /// `--serial-pty`: the USB serial as a pseudo-terminal.
+    pub serial_pty: Option<crate::serial_pty::SerialPty>,
 }
 
 /// The firmware files `--hot-reload` watches, and how they looked when last loaded.
@@ -349,6 +351,14 @@ pub fn run(mut m: Box<dyn Machine>, ports: SimPorts, mut opts: RunnerOptions) ->
     'main: loop {
         let bluetooth_now = m.now_ns();
         m.bluetooth().pump(bluetooth_now);
+        // ---- host bytes from the serial pty ----
+        if let Some(p) = opts.serial_pty.as_mut() {
+            let data = p.read_input();
+            if !data.is_empty() {
+                m.serial_input(&data);
+            }
+        }
+
         // ---- commands ----
         while let Some(cmd) = next_cmd.take().or_else(|| ports.commands.try_recv().ok()) {
             let mut rebase = false;
@@ -786,6 +796,9 @@ pub fn run(mut m: Box<dyn Machine>, ports: SimPorts, mut opts: RunnerOptions) ->
                 use std::io::Write;
                 match item {
                     Output::Serial(b) => {
+                        if let Some(p) = opts.serial_pty.as_mut() {
+                            p.write_output(&b);
+                        }
                         if let Some(so) = so.as_mut() {
                             let _ = so.write_all(&b);
                         }

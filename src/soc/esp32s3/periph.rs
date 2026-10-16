@@ -1241,4 +1241,37 @@ mod usb_tests {
         }
         assert_eq!(got, b"!tp log live\n");
     }
+
+    /// `--serial-pty`: what the host writes to the port path reaches the RX FIFO, firmware TX reads back
+    /// from the port, and the link is removed on drop.
+    #[test]
+    fn serial_pty_bridges_both_ways() {
+        use std::io::{Read, Write};
+        let path = std::env::temp_dir().join(format!("trmnl-sim-pty-{}", std::process::id()));
+        let mut pty = crate::serial_pty::SerialPty::open(&path).unwrap();
+        let mut port = std::fs::OpenOptions::new().read(true).write(true).open(&path).unwrap();
+        port.write_all(b"!tp log live\n").unwrap();
+        let mut b = bus();
+        let mut got = Vec::new();
+        for _ in 0..200 {
+            got.extend(pty.read_input());
+            if got.len() >= 13 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        b.usb_rx_push(&got);
+        let mut fifo = Vec::new();
+        while b.periph_read(EP1_CONF) & OUT_EP_DATA_AVAIL != 0 {
+            fifo.push(b.periph_read(EP1) as u8);
+        }
+        assert_eq!(fifo, b"!tp log live\n");
+
+        pty.write_output(b"boot ok\r\n");
+        let mut tx = [0u8; 9];
+        port.read_exact(&mut tx).unwrap(); // raw mode: no CR/LF translation
+        assert_eq!(&tx, b"boot ok\r\n");
+        drop(pty);
+        assert!(!path.exists(), "link removed on drop");
+    }
 }

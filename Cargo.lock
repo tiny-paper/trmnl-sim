@@ -4027,6 +4027,7 @@ dependencies = [
  "env_logger",
  "flate2",
  "gimli",
+ "libc",
  "log",
  "mock-trmnl",
  "num-bigint",
